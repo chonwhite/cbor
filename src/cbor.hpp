@@ -69,6 +69,54 @@ private:
   iterator::detail detail_;
 };
 
+// TODO iterator<T> ?
+class iterator_wrapper {
+public:
+  using iterator_category = std::forward_iterator_tag;
+  using difference_type = std::ptrdiff_t;
+  using value_type = iterator;
+  using pointer = const iterator *;
+  using reference = const iterator &;
+
+  iterator_wrapper(iterator begin, iterator end) : iter_(begin), end_(end) {}
+
+  reference operator*() const { return iter_; }
+  pointer operator->() { return &iter_; }
+
+  iterator_wrapper begin() {
+    return iterator_wrapper(iter_, end_);
+  }
+
+  iterator_wrapper end() {
+    return iterator_wrapper(end_, end_);
+  }
+  
+  iterator_wrapper &operator++() {
+    iter_++;
+    return *this;
+  }
+  iterator_wrapper operator++(int i) {
+    iterator iter = iter_.operator++(i);
+    return iterator_wrapper(iter, end_);
+  }
+
+  friend bool operator==(const iterator_wrapper &a, const iterator_wrapper &b) {
+    return a.iter_ == b.iter_;
+  }
+  friend bool operator!=(const iterator_wrapper &a, const iterator_wrapper &b) {
+    return a.iter_ != b.iter_;
+  }
+
+private:
+  iterator iter_;
+  iterator end_;
+};
+
+enum class stream_mode : uint8_t {
+  Text,
+  Binary,
+};
+
 class DataItem {
 public:
   DataItem(std::nullptr_t);
@@ -113,18 +161,28 @@ public:
   bool is_float() const;
   bool is_number() const;
 
+  DataItem& at(size_t index);
+  const DataItem& at(size_t index) const; 
+
   template <typename T> T as() { return (T) * this; }
   template <typename T> T get() { return (T) * this; }
 
   iterator begin() const noexcept;
   iterator end() const noexcept;
-  iterator items() const noexcept;
+  iterator_wrapper items() const noexcept;
 
   uint64_t tag() const;
   DataItem child() const;
 
   bool read(std::istream &in);
   void write(std::ostream &out) const;
+
+  /**
+   * @brief Set output stream mode, Text mode can be useful when
+   * outputing to std::cout.
+   * @param mode 
+   */
+  void set_os_mode(stream_mode mode);
 
   void push_back(const DataItem &item);
   void push_back(DataItem &&item);
@@ -133,7 +191,7 @@ public:
     type_ = type_t::Array;
     array_.emplace_back(std::forward<Args>(args)...);
   }
-  // TODO at append, emplace clear;
+  // TODO at append, emplace ;
 
   bool is_empty() const;
   bool empty() const;
@@ -194,6 +252,7 @@ private:
   std::string string_;
   std::vector<DataItem> array_;
   std::map<DataItem, DataItem> map_;
+  stream_mode output_mode_ = stream_mode::Text;
 
   uint64_t to_unsigned() const;
   int64_t to_signed() const;

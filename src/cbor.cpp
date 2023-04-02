@@ -62,13 +62,13 @@ iterator &iterator::operator++() {
 }
 
 // Postfix increment
-iterator iterator::operator++(int) {
+iterator iterator::operator++(int i) {
   iterator::detail tmp;
   if (detail_.type_ == type_t::Array) {
-    tmp.array_iterator_ = detail_.array_iterator_++;
+    tmp.array_iterator_ = detail_.array_iterator_.operator++(i);
   }
   if (detail_.type_ == type_t::Map) {
-    tmp.map_iterator_ = detail_.map_iterator_++;
+    tmp.map_iterator_ = detail_.map_iterator_.operator++(i);
   }
   return iterator(tmp);
 }
@@ -177,6 +177,10 @@ bool DataItem::is_number() const {
          this->type_ == type_t::Float;
 }
 
+DataItem &DataItem::at(size_t index) { return array_.at(index); }
+
+const DataItem &DataItem::at(size_t index) const { return array_.at(index); }
+
 cbor::type_t DataItem::type() const { return this->type_; }
 uint64_t DataItem::tag() const {
   switch (this->type_) {
@@ -260,20 +264,24 @@ iterator DataItem::end() const noexcept {
   return iterator(detail);
 }
 
-iterator DataItem::items() const noexcept {
-  return begin();
+iterator_wrapper DataItem::items() const noexcept {
+  return iterator_wrapper(begin(), end());
 }
 // iterator end() const noexcept;
 
 /** ----------------- freinds -------------------- */
 
-std::istream& operator>> (std::istream& is, DataItem& item) {
+std::istream &operator>>(std::istream &is, DataItem &item) {
   item.read(is);
   return is;
 }
 
-std::ostream& operator<<(std::ostream& os, const DataItem& item) {
-  item.write(os);
+std::ostream &operator<<(std::ostream &os, const DataItem &item) {
+  if (item.output_mode_ == stream_mode::Binary) {
+    item.write(os);
+  } else {
+    os << item.dump();
+  }
   return os;
 }
 
@@ -402,11 +410,20 @@ DataItem::operator std::map<DataItem, DataItem>() const {
 }
 DataItem::operator cbor::simple() const { return this->to_simple(); }
 
-DataItem &DataItem::operator[](const DataItem &key) { return map_[key]; }
+DataItem &DataItem::operator[](const DataItem &key) {
+  type_ = type_t::Map; // TODO type is null?
+  return map_[key];
+}
 
-DataItem &DataItem::operator[](const DataItem &&key) { return map_[key]; }
+DataItem &DataItem::operator[](const DataItem &&key) {
+  type_ = type_t::Map;
+  return map_[key];
+}
 
-DataItem &DataItem::operator[](const char *key) { return map_[key]; }
+DataItem &DataItem::operator[](const char *key) {
+  type_ = type_t::Map;
+  return map_[key];
+}
 
 void DataItem::operator=(const std::string &str) {
   this->string_ = str;
@@ -471,6 +488,8 @@ bool DataItem::operator==(const DataItem &other) const {
 bool DataItem::operator!=(const DataItem &other) const {
   return !(*this == other);
 }
+
+/* ----------------------- decoder ----------------------- */
 void read_uint(std::istream &in, int &major, int &minor, uint64_t &value) {
   major = (in.peek() >> 5) & 7;
   minor = in.get() & 31;
@@ -494,6 +513,76 @@ void read_uint(std::istream &in, int &major, int &minor, uint64_t &value) {
     break;
   }
 }
+
+/* ----------------------- encoder ----------------------- */
+void write_uint8(std::ostream &out, int major, uint64_t value) {
+  if (value < 24) {
+    out.put(major << 5 | value); // simple;
+  } else {
+    out.put(major << 5 | 24);
+    out.put(value);
+  }
+}
+void write_uint16(std::ostream &out, int major, uint64_t value) {
+  out.put(major << 5 | 25);
+  out.put(value >> 8);
+  out.put(value);
+}
+void write_uint32(std::ostream &out, int major, uint64_t value) {
+  out.put(major << 5 | 26);
+  out.put(value >> 24);
+  out.put(value >> 16);
+  out.put(value >> 8);
+  out.put(value);
+}
+void write_uint64(std::ostream &out, int major, uint64_t value) {
+  out.put(major << 5 | 27);
+  out.put(value >> 56);
+  out.put(value >> 48);
+  out.put(value >> 40);
+  out.put(value >> 32);
+  out.put(value >> 24);
+  out.put(value >> 16);
+  out.put(value >> 8);
+  out.put(value);
+}
+void write_uint(std::ostream &out, int major, uint64_t value) {
+  if ((value >> 8) == 0) {
+    write_uint8(out, major, value);
+  } else if ((value >> 16) == 0) {
+    write_uint16(out, major, value);
+  } else if (value >> 32 == 0) {
+    write_uint32(out, major, value);
+  } else {
+    write_uint64(out, major, value);
+  }
+}
+void write_float(std::ostream &out, double value) {
+  if (double(float(value)) == value) {
+    union {
+      float f;
+      uint32_t i;
+    };
+    f = value;
+    write_uint32(out, 7, i);
+  } else {
+    union {
+      double f;
+      uint64_t i;
+    };
+    f = value;
+    write_uint64(out, 7, i);
+  }
+}
+
+void DataItem::set_os_mode(stream_mode mode) { output_mode_ = mode; }
+
+bool DataItem::validate(const std::vector<uint8_t> &in) {
+  std::istringstream buf1(std::string(in.begin(), in.end()));
+  DataItem buf2;
+  return buf2.read(buf1) && buf1.peek() == EOF;
+}
+
 bool DataItem::read(std::istream &in) {
   DataItem item;
   int major = 0;
@@ -682,65 +771,7 @@ bool DataItem::read(std::istream &in) {
   *this = item;
   return true;
 }
-void write_uint8(std::ostream &out, int major, uint64_t value) {
-  if (value < 24) {
-    out.put(major << 5 | value);
-  } else {
-    out.put(major << 5 | 24);
-    out.put(value);
-  }
-}
-void write_uint16(std::ostream &out, int major, uint64_t value) {
-  out.put(major << 5 | 25);
-  out.put(value >> 8);
-  out.put(value);
-}
-void write_uint32(std::ostream &out, int major, uint64_t value) {
-  out.put(major << 5 | 26);
-  out.put(value >> 24);
-  out.put(value >> 16);
-  out.put(value >> 8);
-  out.put(value);
-}
-void write_uint64(std::ostream &out, int major, uint64_t value) {
-  out.put(major << 5 | 27);
-  out.put(value >> 56);
-  out.put(value >> 48);
-  out.put(value >> 40);
-  out.put(value >> 32);
-  out.put(value >> 24);
-  out.put(value >> 16);
-  out.put(value >> 8);
-  out.put(value);
-}
-void write_uint(std::ostream &out, int major, uint64_t value) {
-  if ((value >> 8) == 0) {
-    write_uint8(out, major, value);
-  } else if ((value >> 16) == 0) {
-    write_uint16(out, major, value);
-  } else if (value >> 32 == 0) {
-    write_uint32(out, major, value);
-  } else {
-    write_uint64(out, major, value);
-  }
-}
-void write_float(std::ostream &out, double value) {
-  if (double(float(value)) == value) {
-    union {
-      float f;
-      uint32_t i;
-    };
-    f = value;
-    write_uint32(out, 7, i);
-  } else {
-    union {
-      double f;
-      uint64_t i;
-    };
-    f = value;
-    write_uint64(out, 7, i);
-  }
-}
+
 void DataItem::write(std::ostream &out) const {
   switch (this->type_) {
   case type_t::Unsigned:
@@ -784,11 +815,6 @@ void DataItem::write(std::ostream &out) const {
     write_float(out, this->float_);
     break;
   }
-}
-bool DataItem::validate(const std::vector<uint8_t> &in) {
-  std::istringstream buf1(std::string(in.begin(), in.end()));
-  DataItem buf2;
-  return buf2.read(buf1) && buf1.peek() == EOF;
 }
 
 // TODO honor the indentation;

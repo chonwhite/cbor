@@ -81,10 +81,18 @@ int main(int argc, char** argv) {
     std::cout << "t:" << t << std::endl;
 
     DataItem m = cbor::map({
-        {"a", "a"},
-        {"b", 12},
+        {"aa", "a"},
+        {"bb", 12},
     });
     assert(m.type() == cbor::type_t::Map);
+
+    m.items().begin();
+    for (auto iter : m.items()) {
+        std::cout << "iter " << iter.key() << " = " << iter.value() << std::endl;
+    }
+
+    // m.set_os_mode(cbor::stream_mode::Binary);
+    std::cout << m << std::endl;
 
     std::ofstream oss("out.cbor", std::ios::out | std::ios::binary);
     oss << m;
