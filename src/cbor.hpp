@@ -33,6 +33,42 @@ enum class type_t : uint8_t {
   Binary,
 };
 
+using array_iterator = std::vector<DataItem>::const_iterator;
+using map_iterator = std::map<DataItem, DataItem>::const_iterator;
+
+class iterator {
+public:
+  struct detail {
+    type_t type_;
+    array_iterator array_iterator_;
+    map_iterator map_iterator_;
+  };
+
+  using iterator_category = std::forward_iterator_tag;
+  using difference_type = std::ptrdiff_t;
+  using value_type = DataItem;
+  using pointer = const DataItem *;
+  using reference = const DataItem &;
+
+  iterator(iterator::detail detail) : detail_(detail) {}
+
+  // for map iteration;
+  reference key() const;
+  reference value() const;
+
+  reference operator*() const { return *detail_.array_iterator_; }
+  pointer operator->() { return detail_.array_iterator_.operator->(); }
+
+  iterator &operator++(); // Prefix increment
+  iterator operator++(int); // Postfix increment
+
+  friend bool operator==(const iterator &a, const iterator &b);
+  friend bool operator!=(const iterator &a, const iterator &b);
+
+private:
+  iterator::detail detail_;
+};
+
 class DataItem {
 public:
   DataItem(std::nullptr_t);
@@ -53,6 +89,7 @@ public:
 
   DataItem(const char *value);
   DataItem(const std::vector<uint8_t> &value);
+
   DataItem(const std::string &value);
 
   DataItem(const std::vector<DataItem> &value);
@@ -77,7 +114,11 @@ public:
   bool is_number() const;
 
   template <typename T> T as() { return (T) * this; }
-  template <typename T> T get() {return (T) * this; }
+  template <typename T> T get() { return (T) * this; }
+
+  iterator begin() const noexcept;
+  iterator end() const noexcept;
+  iterator items() const noexcept;
 
   uint64_t tag() const;
   DataItem child() const;
@@ -88,12 +129,10 @@ public:
   void push_back(const DataItem &item);
   void push_back(DataItem &&item);
 
-  template <class... Args>
-  void emplace_back(Args &&...args) {
+  template <class... Args> void emplace_back(Args &&...args) {
     type_ = type_t::Array;
     array_.emplace_back(std::forward<Args>(args)...);
   }
-
   // TODO at append, emplace clear;
 
   bool is_empty() const;
@@ -101,10 +140,14 @@ public:
 
   size_t size() const;
 
+  void clear();
+
   void operator=(const std::string &str);
   void operator=(const char *str);
 
   DataItem &operator[](const DataItem &key);
+  DataItem &operator[](const DataItem &&key);
+
   DataItem &operator[](const char *key);
 
   operator uint8_t() const;
@@ -132,13 +175,15 @@ public:
 
   bool operator<(const DataItem &other) const;
 
-  // TODO stream operator << and >>;
-  // TODO iterator;
+  std::string dump(int indent = 2) const;
 
   static DataItem tagged(unsigned long long tag, const DataItem &value);
   static bool validate(const std::vector<uint8_t> &in);
-  static std::string debug(const DataItem &in);
 
+  friend std::istream& operator>> (std::istream& is, DataItem& item);
+  friend std::ostream& operator<<(std::ostream& os, const DataItem& item);
+
+  friend iterator;
 private:
   cbor::type_t type_ = type_t::Simple; // TODO null;
   union {

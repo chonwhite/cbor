@@ -14,7 +14,6 @@ const int Array = 4;
 const int Map = 5;
 const int Tag = 6;
 const int Simple = 7; // float and simple;
-
 } // namespace major
 
 DataItem decode(const std::vector<uint8_t> &in) {
@@ -44,6 +43,52 @@ DataItem map(std::initializer_list<std::pair<DataItem, DataItem>> items) {
   }
   return item;
 }
+
+iterator::reference iterator::key() const {
+  return detail_.map_iterator_->first;
+}
+iterator::reference iterator::value() const {
+  return detail_.map_iterator_->second;
+}
+
+iterator &iterator::operator++() {
+  if (detail_.type_ == type_t::Array) {
+    detail_.array_iterator_++;
+  }
+  if (detail_.type_ == type_t::Map) {
+    detail_.map_iterator_++;
+  }
+  return *this;
+}
+
+// Postfix increment
+iterator iterator::operator++(int) {
+  iterator::detail tmp;
+  if (detail_.type_ == type_t::Array) {
+    tmp.array_iterator_ = detail_.array_iterator_++;
+  }
+  if (detail_.type_ == type_t::Map) {
+    tmp.map_iterator_ = detail_.map_iterator_++;
+  }
+  return iterator(tmp);
+}
+
+bool operator==(const iterator &a, const iterator &b) {
+  if (a.detail_.type_ != b.detail_.type_) {
+    return false;
+  };
+  if (a.detail_.type_ == type_t::Array) {
+    return a.detail_.array_iterator_ == b.detail_.array_iterator_;
+  }
+  if (a.detail_.type_ == type_t::Map) {
+    return a.detail_.map_iterator_ == b.detail_.map_iterator_;
+  }
+  return false;
+};
+
+bool operator!=(const iterator &a, const iterator &b) {
+  return !(operator==(a, b));
+};
 
 DataItem::DataItem(std::nullptr_t)
     : type_(type_t::Simple), value_(simple::Null) {}
@@ -183,7 +228,7 @@ bool DataItem::is_empty() const {
 bool DataItem::empty() const { return is_empty(); }
 
 size_t DataItem::size() const {
-    switch (type_) {
+  switch (type_) {
   case type_t::Array:
     return array_.size();
   // TODO tagged?
@@ -192,6 +237,44 @@ size_t DataItem::size() const {
   default:
     return 0; // TODO
   }
+}
+
+void DataItem::clear() {
+  array_.clear();
+  map_.clear();
+}
+
+iterator DataItem::begin() const noexcept {
+  iterator::detail detail;
+  detail.type_ = type_;
+  detail.array_iterator_ = array_.begin();
+  detail.map_iterator_ = map_.begin();
+  return iterator(detail);
+}
+
+iterator DataItem::end() const noexcept {
+  iterator::detail detail;
+  detail.type_ = type_;
+  detail.array_iterator_ = array_.end();
+  detail.map_iterator_ = map_.end();
+  return iterator(detail);
+}
+
+iterator DataItem::items() const noexcept {
+  return begin();
+}
+// iterator end() const noexcept;
+
+/** ----------------- freinds -------------------- */
+
+std::istream& operator>> (std::istream& is, DataItem& item) {
+  item.read(is);
+  return is;
+}
+
+std::ostream& operator<<(std::ostream& os, const DataItem& item) {
+  item.write(os);
+  return os;
 }
 
 /** ----------------- private -------------------- */
@@ -320,6 +403,8 @@ DataItem::operator std::map<DataItem, DataItem>() const {
 DataItem::operator cbor::simple() const { return this->to_simple(); }
 
 DataItem &DataItem::operator[](const DataItem &key) { return map_[key]; }
+
+DataItem &DataItem::operator[](const DataItem &&key) { return map_[key]; }
 
 DataItem &DataItem::operator[](const char *key) { return map_[key]; }
 
@@ -706,25 +791,26 @@ bool DataItem::validate(const std::vector<uint8_t> &in) {
   return buf2.read(buf1) && buf1.peek() == EOF;
 }
 
-std::string DataItem::debug(const DataItem &in) {
+// TODO honor the indentation;
+std::string DataItem::dump(int indent) const {
   std::ostringstream out;
-  switch (in.type_) {
+  switch (type_) {
   case type_t::Unsigned:
-    out << in.value_;
+    out << value_;
     break;
   case type_t::Negative:
-    if (1 + in.value_ == 0) {
+    if (1 + value_ == 0) {
       out << "-18446744073709551616";
     } else {
-      out << "-" << 1 + in.value_;
+      out << "-" << 1 + value_;
     }
     break;
   case type_t::Binary:
     out << "h'";
     out << std::hex;
     out.fill('0');
-    for (std::vector<uint8_t>::const_iterator it = in.binary_.begin();
-         it != in.binary_.end(); ++it) {
+    for (std::vector<uint8_t>::const_iterator it = binary_.begin();
+         it != binary_.end(); ++it) {
       out.width(2);
       out << int(*it);
     }
@@ -734,8 +820,8 @@ std::string DataItem::debug(const DataItem &in) {
     out << "\"";
     out << std::hex;
     out.fill('0');
-    for (std::string::const_iterator it = in.string_.begin();
-         it != in.string_.end(); ++it) {
+    for (std::string::const_iterator it = string_.begin(); it != string_.end();
+         ++it) {
       switch (*it) {
       case '\n':
         out << "\\n";
@@ -764,31 +850,31 @@ std::string DataItem::debug(const DataItem &in) {
     break;
   case type_t::Array:
     out << "[";
-    for (std::vector<DataItem>::const_iterator it = in.array_.begin();
-         it != in.array_.end(); ++it) {
-      if (it != in.array_.begin()) {
+    for (std::vector<DataItem>::const_iterator it = array_.begin();
+         it != array_.end(); ++it) {
+      if (it != array_.begin()) {
         out << ", ";
       }
-      out << DataItem::debug(*it);
+      out << it->dump(indent);
     }
     out << "]";
     break;
   case type_t::Map:
     out << "{";
-    for (std::map<DataItem, DataItem>::const_iterator it = in.map_.begin();
-         it != in.map_.end(); ++it) {
-      if (it != in.map_.begin()) {
+    for (std::map<DataItem, DataItem>::const_iterator it = map_.begin();
+         it != map_.end(); ++it) {
+      if (it != map_.begin()) {
         out << ", ";
       }
-      out << DataItem::debug(it->first) << ": " << DataItem::debug(it->second);
+      out << it->first.dump(indent) << ": " << it->second.dump(indent);
     }
     out << "}";
     break;
   case type_t::Tagged:
-    out << in.value_ << "(" << DataItem::debug(in.array_.front()) << ")";
+    out << value_ << "(" << array_.front().dump(indent) << ")";
     break;
   case type_t::Simple:
-    switch (in.value_) {
+    switch (value_) {
     case simple::False:
       out << "false";
       break;
@@ -802,20 +888,20 @@ std::string DataItem::debug(const DataItem &in) {
       out << "undefined";
       break;
     default:
-      out << "simple(" << in.value_ << ")";
+      out << "simple(" << value_ << ")"; // TODO
       break;
     }
     break;
   case type_t::Float:
-    if (std::isinf(in.float_)) {
-      if (in.float_ < 0) {
+    if (std::isinf(float_)) {
+      if (float_ < 0) {
         out << "-";
       }
       out << "Infinity";
-    } else if (std::isnan(in.float_)) {
+    } else if (std::isnan(float_)) {
       out << "NaN";
     } else {
-      out << std::showpoint << in.float_;
+      out << std::showpoint << float_;
     }
     break;
   }
